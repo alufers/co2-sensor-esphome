@@ -15,4 +15,4 @@ Available for free at [printables.com](https://www.printables.com/model/692296-s
 
 ## License
 
-![2-Clause BSD License](./LICENSE.md)
+[2-Clause BSD License](./LICENSE.md)
