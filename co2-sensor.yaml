@@ -1,0 +1,194 @@
+esphome:
+  name: co2-sensor
+  friendly_name: co2-sensor
+
+esp32:
+  board: esp32-s2-saola-1
+  framework:
+    type: arduino
+
+# ----
+# PIN DEFINITIONS
+# ----
+
+uart:
+  rx_pin: 18
+  tx_pin: 16
+  baud_rate: 9600
+
+i2c:
+  sda: 33
+  scl: 35
+
+# Remove this if you don't want to use the WS2812 LED
+light:
+  - platform: esp32_rmt_led_strip
+    rgb_order: RGB
+    pin: 36
+    num_leds: 1
+    rmt_channel: 0
+    chipset: ws2812
+    name: "Top light"
+
+# ----
+# MQTT + WiFi configuration
+# ----
+
+# If you don't want mqtt, you can replace this with the native esphome api: https://esphome.io/components/api.html
+
+mqtt:
+  broker: !secret mqtt_host
+  username: !secret mqtt_user
+  password: !secret mqtt_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "${name} Fallback"
+    password: !secret fallback_password
+
+ota:
+  password: !secret ota_password
+  on_begin:
+    then:
+      - display.page.show: ota_page
+      - component.update: my_display
+  on_progress:
+    then:
+      - lambda: |-
+          id(ota_progress) = x;
+      - component.update: my_display
+
+logger:
+  level: ERROR # disables annoying warnings from the display component
+
+captive_portal:
+
+web_server:
+  port: 80
+
+sensor:
+  - platform: senseair
+    id: senseair_comp
+    co2:
+      id: co2
+      name: "SenseAir CO2 Value"
+    update_interval: 30s
+
+button:
+  - platform: template
+    name: "Calibrate CO2"
+    on_press:
+      - senseair.background_calibration: senseair_comp
+
+font:
+  - file: "gfonts://Roboto"
+    id: roboto
+    size: 15
+  - file: "gfonts://Roboto"
+    id: roboto_small
+    size: 10
+
+graph:
+  - id: co2_graph
+    duration: 10min
+    width: 48
+    height: 44
+    border: false
+    traces:
+      - sensor: co2
+        line_thickness: 1
+
+globals:
+  - id: anti_burn_in
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  - id: boot_screen_time
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  - id: ota_progress
+    type: float
+    restore_value: no
+    initial_value: "0"
+
+interval:
+  - interval: 60s
+    then:
+      - lambda: |-
+          id(anti_burn_in)++;
+      - component.update: my_display
+  - interval: 1s
+    then:
+      - lambda: |-
+          if(id(boot_screen_time) < 15) {
+            id(boot_screen_time)++;
+          } else {
+            id(my_display)->show_page(id(main_page));
+          }
+
+      - component.update: my_display
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: ESP IP Address
+      id: esp_ip
+    ssid:
+      name: ESP Connected SSID
+      id: esp_ssid
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 64x48"
+    id: my_display
+    # reset_pin: D0
+    address: 0x3C
+    rotation: 90
+    # display size: 64x48
+    pages:
+      - id: boot_page
+        lambda: |-
+          it.printf(48/2, 4, id(roboto_small), COLOR_ON, TextAlign::TOP_CENTER, "CO2");
+          it.printf(48/2, 4+12, id(roboto_small), COLOR_ON, TextAlign::TOP_CENTER, "Sensor");
+          if(id(esp_ssid).state.length() > 0) {
+
+          it.printf(48/2, 4+12+15, id(roboto_small), COLOR_ON, TextAlign::TOP_CENTER, id(esp_ssid).state.c_str());
+          it.printf(48/2, 4+12+15+12, id(roboto_small), COLOR_ON, TextAlign::TOP_CENTER, id(esp_ip).state.c_str());
+          } else {
+            const char *txt = "";
+            switch(id(anti_burn_in) % 3) {
+              case 0:
+                txt = ".";
+                break;
+              case 1:
+                txt = "..";
+                break;
+              case 2:
+                txt = "...";
+                break;
+            }
+            it.printf(48/2, 4+12+15, id(roboto_small), COLOR_ON, TextAlign::TOP_CENTER, txt);
+          }
+      - id: main_page
+        lambda: |-
+          // last 3 bits of anti_burn_in are used to calculate x_offset
+          int32_t x_offset = id(anti_burn_in) & 0b00111;
+          int32_t y_offset = 0;
+          int32_t should_flip = id(anti_burn_in) & 0b01000;
+          if(should_flip) {
+              it.printf(48/2 + x_offset - 3, 0 + y_offset, id(roboto), COLOR_ON, TextAlign::TOP_CENTER, "%.0f", id(co2).state);
+              it.graph(0, 15, id(co2_graph));
+          } else {
+              it.graph(0, 0, id(co2_graph));
+              it.printf(48/2 + x_offset - 3, 64 + y_offset, id(roboto), COLOR_ON, TextAlign::BOTTOM_CENTER, "%.0f", id(co2).state);
+          }
+      - id: ota_page
+        lambda: |-
+          it.printf(48/2, 4, id(roboto), COLOR_ON, TextAlign::TOP_CENTER, "OTA");
+          it.printf(48/2, 4+15, id(roboto), COLOR_ON, TextAlign::TOP_CENTER, "...");
+          it.printf(48/2, 4+15+15, id(roboto), COLOR_ON, TextAlign::TOP_CENTER, "%.0f%%", id(ota_progress));

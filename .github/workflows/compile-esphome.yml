@@ -1,0 +1,25 @@
+name: Compile ESPHome
+
+on:
+  push:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: "Create dummy secrets.yaml"
+        run: |
+          cat > secrets.yaml <<EOF
+          wifi_ssid: "dummy"
+          wifi_password: "dummydummydummy"
+          fallback_password: "dummydummydummy"
+          ota_password: "dummy"
+          mqtt_host: "dummy"
+          mqtt_user: "dummy"
+          mqtt_password: "dummy"
+          EOF
+      - name: Compile ESPHome config
+        run: docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" esphome/esphome compile co2-sensor.yaml
